@@ -1,0 +1,9 @@
+services:
+  task-board:
+    build: .
+    container_name: task-board
+    restart: unless-stopped
+    ports:
+      - "3080:3000"
+    volumes:
+      - ./data:/data
