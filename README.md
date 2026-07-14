@@ -26,6 +26,24 @@ npm run dev            # Vite dev server on :5173, proxies /api to :3000
 
 The header has EXPORT (downloads board JSON) and IMPORT (replaces board from a JSON file). Exports from the Claude artifact version import here directly.
 
+Export format (v2) includes full project config alongside cards:
+
+```json
+{
+  "app": "build-board",
+  "version": 2,
+  "exported": "2026-07-14T00:00:00.000Z",
+  "projects": [
+    { "id": "game", "label": "Treasure Hunter", "short": "GAME", "color": "#3dff6e" }
+  ],
+  "cards": [
+    { "id": "c1", "track": "game", "col": "doing", "title": "...", "note": "..." }
+  ]
+}
+```
+
+v1 exports (cards only) still import — they keep whatever projects are currently on the board.
+
 ## API
 
 - `GET /api/storage/:key` → `{ key, value }` or 404

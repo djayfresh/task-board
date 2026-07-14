@@ -3,10 +3,18 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // ---------- constants ----------
 const STORAGE_KEY = "build-board-state-v1";
 
-const TRACKS = {
-  game: { label: "Treasure Hunter", short: "GAME", color: "#3dff6e", dim: "rgba(61,255,110,0.10)" },
-  pin: { label: "Pinball Cab", short: "PIN", color: "#ffe033", dim: "rgba(255,224,51,0.10)" },
-  lab: { label: "Homelab", short: "LAB", color: "#e8ffe8", dim: "rgba(232,255,232,0.08)" },
+const DEFAULT_PROJECTS = [
+  { id: "game", label: "Treasure Hunter", short: "GAME", color: "#3dff6e" },
+  { id: "pin", label: "Pinball Cab", short: "PIN", color: "#ffe033" },
+  { id: "lab", label: "Homelab", short: "LAB", color: "#e8ffe8" },
+];
+
+// hacker palette for new projects — first unused color is offered by default
+const PALETTE = ["#3dff6e", "#ffe033", "#e8ffe8", "#33e0ff", "#ff9d33", "#ff5ce8", "#ff5555", "#a0ff33"];
+
+const dimColor = (hex) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},0.10)`;
 };
 
 const COLUMNS = [
@@ -34,6 +42,10 @@ const SEED = [
 let idCounter = 100;
 const newId = () => `c${Date.now()}_${idCounter++}`;
 
+const isValidProject = (p) =>
+  p && typeof p.id === "string" && p.id && typeof p.label === "string" && p.label &&
+  typeof p.short === "string" && typeof p.color === "string" && /^#[0-9a-fA-F]{6}$/.test(p.color);
+
 // ---------- storage adapter (self-hosted API) ----------
 const storage = {
   get: async (key) => {
@@ -55,27 +67,43 @@ const storage = {
 // ---------- component ----------
 export default function BuildBoard() {
   const [cards, setCards] = useState(null); // null = loading
+  const [projects, setProjects] = useState(DEFAULT_PROJECTS);
   const [filter, setFilter] = useState("all");
   const [adding, setAdding] = useState(null);
   const [newTitle, setNewTitle] = useState("");
-  const [newTrack, setNewTrack] = useState("game");
+  const [newTrack, setNewTrack] = useState(DEFAULT_PROJECTS[0].id);
   const [editing, setEditing] = useState(null);
   const [editTitle, setEditTitle] = useState("");
   const [editNote, setEditNote] = useState("");
   const [dragId, setDragId] = useState(null);
   const [dragOver, setDragOver] = useState(null);
   const [saveState, setSaveState] = useState("idle"); // idle | saving | saved | error
+  // new-project form
+  const [projForm, setProjForm] = useState(false);
+  const [projName, setProjName] = useState("");
+  const [projShort, setProjShort] = useState("");
+  const [projShortTouched, setProjShortTouched] = useState(false);
+  const [projColor, setProjColor] = useState(PALETTE[3]);
   const saveTimer = useRef(null);
   const firstLoad = useRef(true);
   const fileRef = useRef(null);
 
-  // load
+  const pmap = Object.fromEntries(projects.map((p) => [p.id, p]));
+
+  // load — accepts legacy shape (bare cards array) or v2 shape ({ cards, projects })
   useEffect(() => {
     (async () => {
       try {
         const res = await storage.get(STORAGE_KEY);
         if (res && res.value) {
-          setCards(JSON.parse(res.value));
+          const data = JSON.parse(res.value);
+          if (Array.isArray(data)) {
+            setCards(data); // legacy: cards only, keep default projects
+          } else {
+            const loadedProjects = Array.isArray(data.projects) && data.projects.filter(isValidProject);
+            if (loadedProjects && loadedProjects.length) setProjects(loadedProjects);
+            setCards(Array.isArray(data.cards) ? data.cards : SEED);
+          }
           return;
         }
       } catch (e) {
@@ -85,7 +113,7 @@ export default function BuildBoard() {
     })();
   }, []);
 
-  // save (debounced)
+  // save (debounced) — persists cards + projects together
   useEffect(() => {
     if (cards === null) return;
     if (firstLoad.current) {
@@ -96,7 +124,7 @@ export default function BuildBoard() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
-        await storage.set(STORAGE_KEY, JSON.stringify(cards));
+        await storage.set(STORAGE_KEY, JSON.stringify({ cards, projects }));
         setSaveState("saved");
         setTimeout(() => setSaveState("idle"), 1600);
       } catch (e) {
@@ -104,7 +132,7 @@ export default function BuildBoard() {
       }
     }, 500);
     return () => clearTimeout(saveTimer.current);
-  }, [cards]);
+  }, [cards, projects]);
 
   const moveCard = useCallback((id, col) => {
     setCards((cs) => {
@@ -141,9 +169,30 @@ export default function BuildBoard() {
     setEditing(null);
   };
 
+  // ---------- projects ----------
+  const openProjForm = () => {
+    const used = new Set(projects.map((p) => p.color));
+    setProjColor(PALETTE.find((c) => !used.has(c)) || PALETTE[0]);
+    setProjName("");
+    setProjShort("");
+    setProjShortTouched(false);
+    setProjForm(true);
+  };
+
+  const addProject = () => {
+    const label = projName.trim();
+    if (!label) return;
+    const short = (projShort.trim() || label.slice(0, 4)).toUpperCase().slice(0, 6);
+    let id = short.toLowerCase().replace(/[^a-z0-9]/g, "") || `p${Date.now()}`;
+    if (pmap[id]) id = `${id}${Date.now() % 100000}`;
+    setProjects((ps) => [...ps, { id, label, short, color: projColor }]);
+    setProjForm(false);
+    setFilter(id);
+  };
+
   // ---------- export / import ----------
   const exportBoard = () => {
-    const payload = { app: "build-board", version: 1, exported: new Date().toISOString(), cards };
+    const payload = { app: "build-board", version: 2, exported: new Date().toISOString(), projects, cards };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -160,13 +209,21 @@ export default function BuildBoard() {
     reader.onload = () => {
       try {
         const data = JSON.parse(reader.result);
-        const imported = Array.isArray(data) ? data : data.cards;
-        if (!Array.isArray(imported)) throw new Error("no cards array");
-        const valid = imported.filter(
-          (c) => c && typeof c.title === "string" && TRACKS[c.track] && COLUMNS.some((col) => col.id === c.col)
+        const importedCards = Array.isArray(data) ? data : data.cards;
+        if (!Array.isArray(importedCards)) throw new Error("no cards array");
+        // v2 exports carry project config; v1 exports fall back to current projects
+        const importedProjects = !Array.isArray(data) && Array.isArray(data.projects)
+          ? data.projects.filter(isValidProject)
+          : null;
+        const nextProjects = importedProjects && importedProjects.length ? importedProjects : projects;
+        const projIds = new Set(nextProjects.map((p) => p.id));
+        const valid = importedCards.filter(
+          (c) => c && typeof c.title === "string" && projIds.has(c.track) && COLUMNS.some((col) => col.id === c.col)
         );
         if (!valid.length) throw new Error("no valid cards");
+        setProjects(nextProjects);
         setCards(valid.map((c) => ({ id: c.id || newId(), track: c.track, col: c.col, title: c.title, note: c.note || "" })));
+        setFilter("all");
       } catch (e) {
         setSaveState("error");
         setTimeout(() => setSaveState("idle"), 2000);
@@ -185,12 +242,13 @@ export default function BuildBoard() {
 
   const visible = filter === "all" ? cards : cards.filter((c) => c.track === filter);
   const counts = Object.fromEntries(
-    Object.keys(TRACKS).map((k) => {
-      const t = cards.filter((c) => c.track === k);
-      return [k, { done: t.filter((c) => c.col === "done").length, total: t.length }];
+    projects.map((p) => {
+      const t = cards.filter((c) => c.track === p.id);
+      return [p.id, { done: t.filter((c) => c.col === "done").length, total: t.length }];
     })
   );
   const totalDone = cards.filter((c) => c.col === "done").length;
+  const fallbackTrack = { label: "?", short: "???", color: "#5c8f5c" };
 
   return (
     <div className="bb-root">
@@ -240,7 +298,7 @@ export default function BuildBoard() {
         .bb-score-total { font-size: 12px; color: #3d5f3d; }
 
         /* filters */
-        .bb-filters { max-width: 1240px; margin: 0 auto 18px; display: flex; flex-wrap: wrap; gap: 8px; }
+        .bb-filters { max-width: 1240px; margin: 0 auto 18px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
         .bb-chip {
           border: 1px solid #1c3a1c; background: #081008; color: #6faf6f;
           padding: 5px 14px; border-radius: 999px; font-size: 12px; letter-spacing: 0.06em;
@@ -249,6 +307,26 @@ export default function BuildBoard() {
         .bb-chip:hover { border-color: #2e5c2e; }
         .bb-chip.on { color: #050805; font-weight: 700; }
         .bb-chip:focus-visible { outline: 2px solid #ffe033; outline-offset: 2px; }
+        .bb-chip.new-proj { border-style: dashed; }
+        .bb-chip.new-proj:hover { color: #3dff6e; border-color: #3dff6e; }
+
+        /* new project form */
+        .bb-proj-form {
+          max-width: 1240px; margin: 0 auto 18px;
+          background: #0a120a; border: 1px solid #2e5c2e; border-radius: 8px;
+          padding: 12px; display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
+        }
+        .bb-proj-field { display: flex; flex-direction: column; gap: 4px; }
+        .bb-proj-field label { font-size: 9px; letter-spacing: 0.2em; color: #4d7a4d; text-transform: uppercase; }
+        .bb-proj-field .bb-input { width: auto; }
+        .bb-swatches { display: flex; gap: 6px; }
+        .bb-swatch {
+          width: 24px; height: 24px; border-radius: 50%; cursor: pointer;
+          border: 2px solid transparent; padding: 0; transition: transform 0.12s;
+        }
+        .bb-swatch:hover { transform: scale(1.15); }
+        .bb-swatch.on { border-color: #d8f5d8; box-shadow: 0 0 8px currentColor; }
+        .bb-swatch:focus-visible { outline: 2px solid #ffe033; outline-offset: 2px; }
 
         /* board */
         .bb-board {
@@ -306,7 +384,7 @@ export default function BuildBoard() {
         .bb-btn.ghost { background: #142a14; color: #6faf6f; }
         .bb-btn.danger { background: transparent; color: #ff5555; margin-left: auto; }
         @media (prefers-reduced-motion: reduce) {
-          .bb-card, .bb-chip, .bb-col, .bb-btn, .bb-io-btn { transition: none; }
+          .bb-card, .bb-chip, .bb-col, .bb-btn, .bb-io-btn, .bb-swatch { transition: none; }
         }
       `}</style>
 
@@ -337,13 +415,13 @@ export default function BuildBoard() {
           </div>
         </div>
         <div className="bb-scores">
-          {Object.entries(TRACKS).map(([k, t]) => (
-            <div className="bb-score" key={k}>
-              <span className="bb-score-label">{t.short}</span>
-              <span className="bb-score-num" style={{ color: t.color }}>
-                {counts[k].done}
+          {projects.map((p) => (
+            <div className="bb-score" key={p.id}>
+              <span className="bb-score-label">{p.short}</span>
+              <span className="bb-score-num" style={{ color: p.color }}>
+                {counts[p.id].done}
               </span>
-              <span className="bb-score-total">/ {counts[k].total}</span>
+              <span className="bb-score-total">/ {counts[p.id].total}</span>
             </div>
           ))}
         </div>
@@ -358,17 +436,73 @@ export default function BuildBoard() {
         >
           All projects
         </button>
-        {Object.entries(TRACKS).map(([k, t]) => (
+        {projects.map((p) => (
           <button
-            key={k}
-            className={`bb-chip ${filter === k ? "on" : ""}`}
-            style={filter === k ? { background: t.color, borderColor: t.color } : {}}
-            onClick={() => setFilter(k)}
+            key={p.id}
+            className={`bb-chip ${filter === p.id ? "on" : ""}`}
+            style={filter === p.id ? { background: p.color, borderColor: p.color } : {}}
+            onClick={() => setFilter(p.id)}
           >
-            {t.label}
+            {p.label}
           </button>
         ))}
+        <button className="bb-chip new-proj" onClick={projForm ? () => setProjForm(false) : openProjForm}>
+          + New project
+        </button>
       </div>
+
+      {/* new project form */}
+      {projForm && (
+        <div className="bb-proj-form">
+          <div className="bb-proj-field">
+            <label>Project name</label>
+            <input
+              className="bb-input"
+              value={projName}
+              autoFocus
+              placeholder="e.g. MiSTer Cabinet"
+              onChange={(e) => {
+                setProjName(e.target.value);
+                if (!projShortTouched) setProjShort(e.target.value.trim().slice(0, 4).toUpperCase());
+              }}
+              onKeyDown={(e) => e.key === "Enter" && addProject()}
+            />
+          </div>
+          <div className="bb-proj-field">
+            <label>Short code</label>
+            <input
+              className="bb-input"
+              style={{ width: 90 }}
+              value={projShort}
+              maxLength={6}
+              placeholder="CODE"
+              onChange={(e) => {
+                setProjShortTouched(true);
+                setProjShort(e.target.value.toUpperCase());
+              }}
+              onKeyDown={(e) => e.key === "Enter" && addProject()}
+            />
+          </div>
+          <div className="bb-proj-field">
+            <label>Color</label>
+            <div className="bb-swatches">
+              {PALETTE.map((c) => (
+                <button
+                  key={c}
+                  className={`bb-swatch ${projColor === c ? "on" : ""}`}
+                  style={{ background: c, color: c }}
+                  aria-label={`Color ${c}`}
+                  onClick={() => setProjColor(c)}
+                />
+              ))}
+            </div>
+          </div>
+          <div className="bb-form-row" style={{ marginTop: 0 }}>
+            <button className="bb-btn primary" onClick={addProject}>Add project</button>
+            <button className="bb-btn ghost" onClick={() => setProjForm(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
 
       {/* board */}
       <div className="bb-board">
@@ -396,7 +530,7 @@ export default function BuildBoard() {
               </div>
 
               {colCards.map((card) => {
-                const t = TRACKS[card.track];
+                const t = pmap[card.track] || fallbackTrack;
                 if (editing === card.id) {
                   return (
                     <div className="bb-form" key={card.id}>
@@ -416,7 +550,7 @@ export default function BuildBoard() {
                   <div
                     key={card.id}
                     className={`bb-card ${dragId === card.id ? "dragging" : ""} ${card.col === "done" ? "done-card" : ""}`}
-                    style={{ "--track": t.color, "--track-dim": t.dim }}
+                    style={{ "--track": t.color, "--track-dim": dimColor(t.color) }}
                     draggable
                     onDragStart={() => setDragId(card.id)}
                     onDragEnd={() => {
@@ -445,8 +579,8 @@ export default function BuildBoard() {
                   />
                   <div style={{ marginTop: 6 }}>
                     <select className="bb-select" value={newTrack} onChange={(e) => setNewTrack(e.target.value)}>
-                      {Object.entries(TRACKS).map(([k, t]) => (
-                        <option key={k} value={k}>{t.label}</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>{p.label}</option>
                       ))}
                     </select>
                   </div>
@@ -456,7 +590,13 @@ export default function BuildBoard() {
                   </div>
                 </div>
               ) : (
-                <button className="bb-add-btn" onClick={() => { setAdding(col.id); setNewTrack(filter === "all" ? "game" : filter); }}>
+                <button
+                  className="bb-add-btn"
+                  onClick={() => {
+                    setAdding(col.id);
+                    setNewTrack(filter !== "all" && pmap[filter] ? filter : projects[0].id);
+                  }}
+                >
                   + Add milestone
                 </button>
               )}
