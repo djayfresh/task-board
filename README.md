@@ -22,6 +22,10 @@ npm run start &        # API on :3000
 npm run dev            # Vite dev server on :5173, proxies /api to :3000
 ```
 
+## First run
+
+The board starts with a single "General" project and a few onboarding cards. Create your own projects from the **+ New project** chip, or restore a full board (projects + cards) with **IMPORT**.
+
 ## Import / export
 
 The header has EXPORT (downloads board JSON) and IMPORT (replaces board from a JSON file). Exports from the Claude artifact version import here directly.
@@ -33,8 +37,9 @@ Export format (v2) includes full project config alongside cards:
   "app": "build-board",
   "version": 2,
   "exported": "2026-07-14T00:00:00.000Z",
+  "title": "Task Board",
   "projects": [
-    { "id": "game", "label": "Treasure Hunter", "short": "GAME", "color": "#3dff6e" }
+    { "id": "web", "label": "Website Redesign", "short": "WEB", "color": "#3dff6e" }
   ],
   "cards": [
     { "id": "c1", "track": "game", "col": "doing", "title": "...", "note": "..." }
@@ -42,7 +47,7 @@ Export format (v2) includes full project config alongside cards:
 }
 ```
 
-v1 exports (cards only) still import — they keep whatever projects are currently on the board.
+The board title is editable — click it in the header. It travels with the export like everything else.\n\nv1 exports (cards only) still import — they keep whatever projects and title are currently on the board.
 
 ## API
 

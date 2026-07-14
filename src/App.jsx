@@ -3,10 +3,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // ---------- constants ----------
 const STORAGE_KEY = "build-board-state-v1";
 
+const DEFAULT_TITLE = "TASK BOARD";
+
 const DEFAULT_PROJECTS = [
-  { id: "game", label: "Treasure Hunter", short: "GAME", color: "#3dff6e" },
-  { id: "pin", label: "Pinball Cab", short: "PIN", color: "#ffe033" },
-  { id: "lab", label: "Homelab", short: "LAB", color: "#e8ffe8" },
+  { id: "general", label: "General", short: "GEN", color: "#3dff6e" },
 ];
 
 // hacker palette for new projects — first unused color is offered by default
@@ -25,18 +25,9 @@ const COLUMNS = [
 ];
 
 const SEED = [
-  { id: "c1", track: "pin", col: "doing", title: "Build original Treasure Hunter VPX table", note: "vpxtool + sidecar .vbs workflow" },
-  { id: "c2", track: "pin", col: "next", title: "Scorbit integration", note: "Player profiles + high score tracking" },
-  { id: "c3", track: "pin", col: "next", title: "Install CyberPower UPS on cabinet", note: "CP1500PFCLCD" },
-  { id: "c4", track: "pin", col: "done", title: "Multi-screen display config", note: "4K playfield / DMD / backglass" },
-  { id: "c5", track: "game", col: "doing", title: "SDXL isometric asset pipeline", note: "ComfyUI + Juggernaut XL, batch first tileset" },
-  { id: "c6", track: "game", col: "next", title: "Design tech tree", note: "Detection → excavation → diving → archaeology → commerce" },
-  { id: "c7", track: "game", col: "backlog", title: "Extract Tower Apocalypse framework", note: "Input, HUD, save/load, analytics → shared TS package" },
-  { id: "c8", track: "game", col: "backlog", title: "Playable prototype: depth-sorted iso movement", note: "" },
-  { id: "c9", track: "lab", col: "doing", title: "Make blackbox on-demand only", note: "Docker + NUT + NFS migrated to gb" },
-  { id: "c10", track: "lab", col: "backlog", title: "Revisit SteamOS dual-boot", note: "Nov 2026 — waiting on NVIDIA/Blackwell support" },
-  { id: "c11", track: "lab", col: "done", title: "PVE 8 → 9 cluster upgrade", note: "blackbox, gb, tn1, tn2" },
-  { id: "c12", track: "lab", col: "done", title: "TrueNAS SCALE migration", note: "UGREEN DXP4800 Pro, BlackBox pool preserved" },
+  { id: "s1", track: "general", col: "next", title: "Create a project", note: "Use + New project in the filter row — name, short code, color" },
+  { id: "s2", track: "general", col: "next", title: "Restore a board", note: "IMPORT accepts a previous EXPORT file (projects + cards)" },
+  { id: "s3", track: "general", col: "backlog", title: "Add your first milestone", note: "" },
 ];
 
 let idCounter = 100;
@@ -68,6 +59,8 @@ const storage = {
 export default function BuildBoard() {
   const [cards, setCards] = useState(null); // null = loading
   const [projects, setProjects] = useState(DEFAULT_PROJECTS);
+  const [title, setTitle] = useState(DEFAULT_TITLE);
+  const [editingTitle, setEditingTitle] = useState(false);
   const [filter, setFilter] = useState("all");
   const [adding, setAdding] = useState(null);
   const [newTitle, setNewTitle] = useState("");
@@ -102,6 +95,7 @@ export default function BuildBoard() {
           } else {
             const loadedProjects = Array.isArray(data.projects) && data.projects.filter(isValidProject);
             if (loadedProjects && loadedProjects.length) setProjects(loadedProjects);
+            if (typeof data.title === "string" && data.title.trim()) setTitle(data.title);
             setCards(Array.isArray(data.cards) ? data.cards : SEED);
           }
           return;
@@ -124,7 +118,7 @@ export default function BuildBoard() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
-        await storage.set(STORAGE_KEY, JSON.stringify({ cards, projects }));
+        await storage.set(STORAGE_KEY, JSON.stringify({ title, cards, projects }));
         setSaveState("saved");
         setTimeout(() => setSaveState("idle"), 1600);
       } catch (e) {
@@ -132,7 +126,7 @@ export default function BuildBoard() {
       }
     }, 500);
     return () => clearTimeout(saveTimer.current);
-  }, [cards, projects]);
+  }, [cards, projects, title]);
 
   const moveCard = useCallback((id, col) => {
     setCards((cs) => {
@@ -192,12 +186,13 @@ export default function BuildBoard() {
 
   // ---------- export / import ----------
   const exportBoard = () => {
-    const payload = { app: "build-board", version: 2, exported: new Date().toISOString(), projects, cards };
+    const payload = { app: "build-board", version: 2, exported: new Date().toISOString(), title, projects, cards };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `build-board-${new Date().toISOString().slice(0, 10)}.json`;
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "board";
+    a.download = `${slug}-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -222,6 +217,7 @@ export default function BuildBoard() {
         );
         if (!valid.length) throw new Error("no valid cards");
         setProjects(nextProjects);
+        if (!Array.isArray(data) && typeof data.title === "string" && data.title.trim()) setTitle(data.title);
         setCards(valid.map((c) => ({ id: c.id || newId(), track: c.track, col: c.col, title: c.title, note: c.note || "" })));
         setFilter("all");
       } catch (e) {
@@ -278,7 +274,18 @@ export default function BuildBoard() {
           font-size: clamp(18px, 3vw, 26px); font-weight: 700;
           letter-spacing: 0.24em; color: #3dff6e;
           text-shadow: 0 0 6px rgba(61,255,110,0.8), 0 0 24px rgba(61,255,110,0.35);
+          background: none; border: none; padding: 0; font-family: inherit;
+          cursor: text; text-align: left;
         }
+        .bb-title:hover { color: #6cff92; }
+        .bb-title:focus-visible { outline: 2px solid #ffe033; outline-offset: 4px; }
+        .bb-title-input {
+          font-size: clamp(18px, 3vw, 26px); font-weight: 700;
+          letter-spacing: 0.24em; color: #3dff6e; font-family: inherit;
+          background: #050a05; border: 1px solid #3dff6e; border-radius: 4px;
+          padding: 2px 8px; max-width: 100%;
+        }
+        .bb-title-input:focus { outline: none; box-shadow: 0 0 10px rgba(61,255,110,0.4); }
         .bb-title::before { content: "> "; color: #ffe033; text-shadow: 0 0 8px rgba(255,224,51,0.6); }
         .bb-head-right { display: flex; align-items: center; gap: 10px; }
         .bb-save { font-size: 11px; letter-spacing: 0.18em; color: #4d7a4d; }
@@ -391,7 +398,27 @@ export default function BuildBoard() {
       {/* terminal header */}
       <header className="bb-dmd">
         <div className="bb-dmd-top">
-          <div className="bb-title">DOUG'S BUILD BOARD</div>
+          {editingTitle ? (
+            <input
+              className="bb-title-input"
+              value={title}
+              autoFocus
+              maxLength={40}
+              aria-label="Board title"
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={() => {
+                setTitle((t) => t.trim() || DEFAULT_TITLE);
+                setEditingTitle(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === "Escape") e.target.blur();
+              }}
+            />
+          ) : (
+            <button className="bb-title" onClick={() => setEditingTitle(true)} title="Click to rename board">
+              {title}
+            </button>
+          )}
           <div className="bb-head-right">
             <span className={`bb-save ${saveState}`}>
               {saveState === "saving" && "SAVING…"}
