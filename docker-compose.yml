@@ -1,9 +1,11 @@
 services:
   task-board:
-    build: .
+    image: ghcr.io/djayfresh/task-board:latest
     container_name: task-board
     restart: unless-stopped
     ports:
       - "3080:3000"
     volumes:
       - ./data:/data
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
